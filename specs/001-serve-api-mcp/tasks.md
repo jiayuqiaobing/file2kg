@@ -124,11 +124,11 @@ U1–U6 全部停在文档层面。项目 README 自己的纪律是「动每个�
 
 ### Implementation for User Story 2
 
-- [ ] T020 [P] [US2] 在 `tests/unit/test_serve_mcp.py` 写**成对**工具清单断言（用 `asyncio.run()` 包同步测试，不引入 pytest-asyncio，见 research.md D8）：只读模式工具名集合 == `{"service_info","search"}` **且** 写模式必须含 `ingest`——**先写测试确认失败**
-- [ ] T021 [US2] 在 `src/file2kg/serve/mcp_tools.py` 实现 `service_info` 与 `search` 两个工具，工具描述 MUST 足以让 Agent 正确理解用途与参数（FR-017），描述文案见 contracts/mcp-tools.md §2–§3
-- [ ] T022 [US2] 在 `src/file2kg/serve/app.py` 挂载 `mcp.http_app()` 为子 app 并**接线 lifespan**（漏接会导致 `/mcp` 首次请求 500，官方文档明确警告）——具体写法以 T005 的 U1/U2 实测结论为准
-- [ ] T023 [US2] 核对挂载路径不叠加成 `/mcp/mcp`，起真服务打一次 `/mcp` 冒烟确认会话管理器已初始化
-- [ ] T024 [US2] 断言**双入口清单恒等**：`GET /info` 的 `capabilities` 与 MCP 工具名集合严格相等（同一份 `CapabilityManifest` 驱动，contracts/mcp-tools.md §5）
+- [X] T020 [P] [US2] 在 `tests/unit/test_serve_mcp.py` 写**成对**工具清单断言（用 `asyncio.run()` 包同步测试，不引入 pytest-asyncio，见 research.md D8）：只读模式工具名集合 == `{"service_info","search"}` **且** 写模式必须含 `ingest`——**先写测试确认失败**
+- [X] T021 [US2] 在 `src/file2kg/serve/mcp_tools.py` 实现 `service_info` 与 `search` 两个工具，工具描述 MUST 足以让 Agent 正确理解用途与参数（FR-017），描述文案见 contracts/mcp-tools.md §2–§3
+- [X] T022 [US2] 在 `src/file2kg/serve/app.py` 挂载 `mcp.http_app()` 为子 app 并**接线 lifespan**（漏接会导致 `/mcp` 首次请求 500，官方文档明确警告）——具体写法以 T005 的 U1/U2 实测结论为准
+- [X] T023 [US2] 核对挂载路径不叠加成 `/mcp/mcp`，起真服务打一次 `/mcp` 冒烟确认会话管理器已初始化
+- [X] T024 [US2] 断言**双入口清单恒等**：`GET /info` 的 `capabilities` 与 MCP 工具名集合严格相等（同一份 `CapabilityManifest` 驱动，contracts/mcp-tools.md §5）
 
 **Checkpoint**: US1 + US2 都可用 —— 检索常驻 + Agent 只读接入
 

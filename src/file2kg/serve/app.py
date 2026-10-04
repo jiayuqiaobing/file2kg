@@ -24,6 +24,7 @@ from ..embedder import Embedder
 from ..store import Store
 from ..types import Chunk
 from .http_api import build_app, scrub
+from .mcp_tools import build_mcp
 
 log = logging.getLogger("file2kg.serve")
 
@@ -137,6 +138,7 @@ def build_service(config: ServeConfig) -> Service:
     if config.preload:
         _preload(service)
 
+    service.mcp = build_mcp(service)  # 必须先于 build_app：父 app 要挂它
     service.app = build_app(service)
     return service
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 
 from ..types import Chunk
 
@@ -213,11 +213,13 @@ def _to_hit(row: dict) -> dict:
 # ---------- 路由 ----------
 
 
-async def search_endpoint(request) -> JSONResponse:
-    """POST /search —— 检索（读操作，恒存在）。"""
-    service = request.app.state.service
+def search_documents(service, req: SearchRequest) -> dict:
+    """检索核心 —— **HTTP 与 MCP 两个入口共用同一份实现**。
+
+    共用不是为了省几行：两个入口各写一套，迟早会漂成两套打分口径，
+    客户端从 MCP 拿到的排序和从 HTTP 拿到的对不上（SC-006 / T024 的"清单恒等"同理）。
+    """
     _ensure_store_present(service)
-    req = _parse_search_request(await _read_body(request))
 
     chunk = Chunk.from_text(req.query, "query")
     service.embedder.embed([chunk])  # 首次调用才加载模型，之后常驻（原则 II + 本功能的核心价值）
@@ -232,7 +234,7 @@ async def search_endpoint(request) -> JSONResponse:
     except ValueError as e:
         # 实测（2026-10-04，lancedb 0.38）：缺 FTS 索引时抛的是 **ValueError**
         # "Cannot perform full text search unless an INVERTED index has been created..."，
-        # **不是 NotImplementedError**（cli.py:135 那条例外捕获因此从未生效，见任务记录）。
+        # **不是 NotImplementedError**（cli.py 那条同款捕获也从未生效，已单独修复）。
         # 这里按消息精确识别，不吞掉其它 ValueError。
         msg = str(e)
         if "INVERTED index" in msg or "full text search" in msg:
@@ -247,7 +249,14 @@ async def search_endpoint(request) -> JSONResponse:
     }
     if not results:
         body["note"] = "没有命中——库可能为空，或尚未摄取任何文档"
-    return JSONResponse(body)
+    return body
+
+
+async def search_endpoint(request) -> JSONResponse:
+    """POST /search —— 检索（读操作，恒存在）。"""
+    service = request.app.state.service
+    req = _parse_search_request(await _read_body(request))
+    return JSONResponse(search_documents(service, req))
 
 
 # ---------- 组装 ----------
@@ -267,10 +276,26 @@ def build_routes(service) -> list[Route]:
 
 
 def build_app(service) -> Starlette:
-    """父 Starlette app。MCP 子 app 在 US2 里挂载（含 lifespan 接线）。"""
+    """父 Starlette app：HTTP 路由 + 挂在 /mcp 的 MCP 子 app。
+
+    MCP 的挂载方式由实测确定（scripts/smoke_fastmcp.py，2026-10-04）：
+    - **U1**：必须 `http_app(path="/")` + `Mount("/mcp", ...)`；用 `path="/mcp"` 会叠成
+      `/mcp/mcp`，客户端打 `/mcp` 只会拿到 404。
+    - **U2**：lifespan **必接**。漏接时 `/mcp` 抛 `RuntimeError`（session manager 的
+      task group 未初始化）——官方文档的警告属实。
+    """
     register_secret(service.config.api_key)
+
+    routes = build_routes(service)
+    lifespan = None
+    if service.mcp is not None:
+        mcp_app = service.mcp.http_app(path="/")
+        routes.append(Mount("/mcp", app=mcp_app))
+        lifespan = mcp_app.lifespan
+
     app = Starlette(
-        routes=build_routes(service),
+        routes=routes,
+        lifespan=lifespan,
         exception_handlers={
             404: _handle_not_found,
             HTTPException: _handle_ipv4,
