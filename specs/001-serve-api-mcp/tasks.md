@@ -176,13 +176,13 @@ U1–U6 全部停在文档层面。项目 README 自己的纪律是「动每个�
 
 **Purpose**: 端到端走查、安全加固、发布准备、文档同步、回归
 
-- [ ] T033 [P] 按 quickstart.md 的**全部 7 个场景**逐条走查，记录实际结果与预期的差异
-- [ ] T034 [P] 更新 `README.md`：命令参考表加 `serve`；安装说明加 `pip install "file2kg[serve]"`；速度预期表把「常驻服务 v0.2」从计划改为已实现
-- [ ] T035 [P] 更新 `file2kg-README.md`：路线图勾掉 v0.2 的 serve 条目；若实现中产生了新的踩坑经验，按项目惯例记入对应模块 docstring
-- [ ] T036 跑全量测试（既有约 110 个 + 本功能新增），确认**无回归**；宪法「交付前 MUST 跑通全量测试」
-- [ ] T037 在 `tests/unit/test_serve_service.py` 增加**密钥不泄漏断言**：以哨兵值（如 `sk-SENTINEL`）作为 API key 构造服务，断言 HTTP 错误体、服务日志、审计文件中均不出现该哨兵片段（FR-020 / 宪法原则 I）
-- [ ] T038 发布准备：把 `pyproject.toml` 的 `version` 从 `0.1.0` 提到 `0.2.0`，并核对 `contracts/*.md`、`quickstart.md` 中 `file2kg/0.2.0` 的引用口径一致（可考虑改为从包元数据动态读取版本，避免今后再漂移）
-- [ ] T039 宪法合规终检：逐条复核五原则（重点 III 的成对断言、II 的预热默认、V 的拒开），确认 plan.md 的 Constitution Check 结论与最终实现一致——**在 T037/T038 完成后执行**，确保覆盖新增内容
+- [X] T033 [P] 按 quickstart.md 的**全部 7 个场景**逐条走查，记录实际结果与预期的差异
+- [X] T034 [P] 更新 `README.md`：命令参考表加 `serve`；安装说明加 `pip install "file2kg[serve]"`；速度预期表把「常驻服务 v0.2」从计划改为已实现
+- [X] T035 [P] 更新 `file2kg-README.md`：路线图勾掉 v0.2 的 serve 条目；若实现中产生了新的踩坑经验，按项目惯例记入对应模块 docstring
+- [X] T036 跑全量测试（既有约 110 个 + 本功能新增），确认**无回归**；宪法「交付前 MUST 跑通全量测试」
+- [X] T037 在 `tests/unit/test_serve_service.py` 增加**密钥不泄漏断言**：以哨兵值（如 `sk-SENTINEL`）作为 API key 构造服务，断言 HTTP 错误体、服务日志、审计文件中均不出现该哨兵片段（FR-020 / 宪法原则 I）
+- [X] T038 发布准备：把 `pyproject.toml` 的 `version` 从 `0.1.0` 提到 `0.2.0`，并核对 `contracts/*.md`、`quickstart.md` 中 `file2kg/0.2.0` 的引用口径一致（可考虑改为从包元数据动态读取版本，避免今后再漂移）
+- [X] T039 宪法合规终检：逐条复核五原则（重点 III 的成对断言、II 的预热默认、V 的拒开），确认 plan.md 的 Constitution Check 结论与最终实现一致——**在 T037/T038 完成后执行**，确保覆盖新增内容
 
 ---
 

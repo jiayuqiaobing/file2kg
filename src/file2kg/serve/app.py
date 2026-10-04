@@ -35,6 +35,16 @@ WRITE_CAPABILITIES: tuple[str, ...] = ("ingest",)
 _PRELOAD_PROBE = "internal:preload"  # 预热用的假来源名，结果丢弃、不入库
 
 
+def _service_id() -> str:
+    """服务标识取自**包元数据**，不硬编码——省得 pyproject 改了它不知道。"""
+    try:
+        from importlib.metadata import version as pkg_version  # noqa: PLC0415
+
+        return f"file2kg/{pkg_version('file2kg')}"
+    except Exception:  # noqa: BLE001 — 直接跑源码（未安装）时的兜底
+        return "file2kg/dev"
+
+
 @dataclass
 class Service:
     """一个常驻服务实例的全部状态。
@@ -81,7 +91,7 @@ class Service:
         否则"预热非默认"没人能证伪（research.md C5）。
         """
         return {
-            "service": "file2kg/0.1.0",
+            "service": _service_id(),
             "db_dir": str(self.config.db_dir),
             "table": self.config.table_name,
             "model": self.model,

@@ -7,7 +7,10 @@
 一个什么都没注册、或永远不加载模型的实现同样能通过。所以每条缺席断言都配一条在场断言。
 """
 
+import logging
+
 import pytest
+from starlette.testclient import TestClient
 
 from file2kg.config import ServeConfig
 from file2kg.serve import app as serve_app
@@ -171,6 +174,52 @@ def test_existing_dir_without_table_refused(tmp_path):
     import lancedb
 
     assert "docs" not in lancedb.connect(str(empty)).list_tables().tables
+
+
+# ---------- 密钥不泄漏（FR-020 / 宪法原则 I） ----------
+
+SENTINEL = "sk-SENTINEL-0123456789abcdef"
+
+
+def _all_error_texts(client) -> list[str]:
+    """把各条错误路径的响应体都收齐。"""
+    return [
+        client.post("/search", json={"query": ""}).text,
+        client.post("/search", json={"query": "x", "k": 9999}).text,
+        client.post("/search", content=b"{bad", headers={"Content-Type": "application/json"}).text,
+        client.get("/nope").text,
+        client.post("/ingest", json={}).text,  # 只读 → WRITE_DISABLED
+    ]
+
+
+def test_api_key_never_appears_in_any_error_body(db_dir):
+    """配了 key 也 MUST NOT 让它顺着错误体漏出去（FR-020）。"""
+    svc = serve_app.build_service(ServeConfig(db_dir=db_dir, api_key=SENTINEL))
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        for text in _all_error_texts(c):
+            assert SENTINEL not in text, f"密钥出现在响应里: {text[:120]}"
+
+
+def test_unexpected_error_is_scrubbed_in_body_and_log(db_dir, caplog):
+    """内部异常带出的密钥，在**响应体与日志里都要被擦掉**。
+
+    这条是 FR-020 的硬核心：异常文本最容易夹带配置值，而它同时流向
+    客户端与服务日志——两处都必须干净。
+    """
+    svc = serve_app.build_service(ServeConfig(db_dir=db_dir, api_key=SENTINEL))
+
+    def boom(*_a, **_k):
+        raise RuntimeError(f"内部炸了 key={SENTINEL}")
+
+    svc.store.query = boom
+    with caplog.at_level(logging.ERROR, logger="file2kg.serve"):
+        with TestClient(svc.app, raise_server_exceptions=False) as c:
+            r = c.post("/search", json={"query": "x"})
+
+    assert r.status_code == 500
+    assert SENTINEL not in r.text, "密钥从响应体漏出去了"
+    assert SENTINEL not in caplog.text, "密钥从日志漏出去了"
+    assert "***" in caplog.text, "擦除根本没发生（这条断言保证上一条不是空转）"
 
 
 # ---------- 自述字段完整性 ----------

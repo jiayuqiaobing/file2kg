@@ -29,6 +29,10 @@ file2kg query "默认端口是多少"      # 检索：混合召回（向量 + �
 ```bash
 pip install .                # 从本仓库安装（或 pipx install . 全局可用）
 pip install -e ".[dev]"      # 开发模式 + pytest
+
+# 要跑常驻服务（serve：HTTP API + MCP）才需要这个 extra——
+# 它会带入 FastMCP 及其 50+ 个传递依赖，所以刻意不压在主路径上
+pip install -e ".[serve]"
 ```
 
 要求 Python ≥ 3.10。默认模型 Qwen3-Embedding-0.6B（Apache-2.0，商用自由），首次加载自动下载；下载困难时设镜像 `export HF_ENDPOINT=https://hf-mirror.com`（模型卡直达）。
@@ -69,6 +73,7 @@ file2kg ingest docs/ --db mykb
 |------|------|
 | `file2kg ingest <dir>` | 摄取目录（增量；`--force` 全量；`--chunk-size/--overlap/--window` 可调） |
 | `file2kg query <text>` | 混合检索（`--no-hybrid` 纯向量；`--k 条数`） |
+| `file2kg serve` | 常驻服务：HTTP API + MCP，模型常驻内存。**默认只读**（写能力需显式 `--allow-write`）；`--host/--port/--preload/--docs-dir` 可调 |
 
 通用选项：`--db`（库目录，默认 `file2kg-db/`）、`--table`（表名，默认 `docs`）、`--audit`（审计目录，默认 `file2kg-audit/`）。API 端点用 `--api-url` 覆盖。
 
@@ -97,7 +102,8 @@ file2kg ingest docs/ --db mykb
 |------|------|------|
 | 增量摄取（没文件变） | **0 秒** | 懒加载：没有变化不加载模型 |
 | 首次摄取 / query | ~10 秒 | Python 生态 import 税（torch + sentence-transformers），**不是模型慢**（模型仅 ~0.7 秒） |
-| 常驻服务（v0.2 api.py / mcp_server） | **~0.2 秒** | 模型常驻内存，单条嵌入实测 0.16 秒 |
+| **`serve` 首次检索**（冷） | **~26 秒** | 服务启动时**不**预加载模型；第一次真正检索才加载（默认行为，`--preload` 可改） |
+| **`serve` 后续检索**（热） | **~0.08 秒** | 模型常驻内存。实测：26.1s → 0.078s，**提速 360×**（同一查询连打 5 次） |
 | API 模式（阿里云 DashScope） | 1-2 秒 | 网络往返，无本地加载 |
 
 ## 开发
@@ -107,8 +113,9 @@ file2kg ingest docs/ --db mykb
 python -m pytest tests/
 ```
 
-- 模块站点流程：动每个核心模块前先验证 LanceDB/typer 的实测行为（本项目记录了几处踩坑：RRF 大写 K、谓词单引号、索引新 API 等，见 `scripts/smoke_*.py`）
-- 路线图：v0.2 —— `serve` 常驻 api/mcp；fastembed/ONNX 引擎切换（验收协议：余弦相似度 ≥0.999 才切默认）；PDF/DOCX 加载器
+- 模块站点流程：动每个核心模块前先验证 LanceDB/typer/FastMCP 的实测行为（本项目记录了几处踩坑：RRF 大写 K、谓词单引号、索引新 API、`http_app(path="/")` 与 lifespan 必接等，见 `scripts/smoke_*.py`）
+- 路线图：v0.2 —— ~~`serve` 常驻 api/mcp~~ ✅ 已完成；fastembed/ONNX 引擎切换（验收协议：余弦相似度 ≥0.999 才切默认）；PDF/DOCX 加载器
+- 常驻服务的完整设计与验收记录见 `specs/001-serve-api-mcp/`（宪法 → 规格 → 研究 → 契约 → 任务）
 
 ## 许可证
 
