@@ -258,6 +258,109 @@ def test_store_unavailable_returns_503_and_stays_alive(tmp_path):
         assert c.get("/nope").status_code == 404
 
 
+# ---------- US3：写能力默认"不存在" ----------
+
+def test_read_only_ingest_returns_404_not_403(client):
+    """宪法原则 III：默认模式下写能力**不存在**——得到 404，不是 403。
+
+    403 意味着"端点存在、只是拒绝你"：写路径还在，改个开关就能用。
+    我们要的是"没有这条路"。
+    """
+    r = client.post("/ingest", json={"docs_dir": "whatever"})
+    assert r.status_code == 404
+    err = r.json()["error"]
+    assert err["code"] == "WRITE_DISABLED"
+    assert "--allow-write" in err["hint"]  # 拒绝，但不把用户晾着
+
+
+def test_ingest_route_absent_from_route_table(svc):
+    """更硬的一层：`/ingest` **根本不在路由表里**（不是"在但拦着"）。"""
+    paths = {getattr(r, "path", "") for r in svc.app.routes}
+    assert "/ingest" not in paths
+
+
+def _rw_service(db_dir, tmp_path, **kw):
+    docs = tmp_path / "docs"
+    docs.mkdir(exist_ok=True)
+    (docs / "a.md").write_text("默认端口是 9000，改端口要动配置文件。" * 6, encoding="utf-8")
+    return serve_app.build_service(
+        ServeConfig(db_dir=db_dir, mode="read-write", docs_dir=str(docs),
+                    audit_dir=str(tmp_path / "audit"), **kw)
+    )
+
+
+def test_read_write_ingest_route_present(db_dir, tmp_path):
+    """配对项：写模式下 `/ingest` **必须**在路由表里。
+
+    缺了这条，一个"什么路由都不注册"的实现也能通过上面两条——那是假通过。
+    """
+    svc = _rw_service(db_dir, tmp_path)
+    paths = {getattr(r, "path", "") for r in svc.app.routes}
+    assert "/ingest" in paths
+
+
+def test_read_write_descriptor_reports_mode_and_capability(db_dir, tmp_path):
+    """配对项之二：能力清单里必须**真的**多出 ingest。"""
+    svc = _rw_service(db_dir, tmp_path)
+    d = svc.descriptor()
+    assert d["mode"] == "read-write"
+    assert "ingest" in d["capabilities"]
+
+
+def test_ingest_returns_job_summary_with_audit_path(db_dir, tmp_path):
+    svc = _rw_service(db_dir, tmp_path)
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        r = c.post("/ingest", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {
+        "job_id", "files_total", "ingested", "dupes", "skipped",
+        "failed", "chunk_count", "audit_path", "skipped_files", "errors",
+    }
+    assert body["ingested"] == 1
+    assert body["audit_path"]
+
+
+def test_ingest_summary_keeps_imperfections_visible(db_dir, tmp_path):
+    """宪法原则 IV：`skipped_files` / `errors` **MUST** 出现在响应里。
+
+    缺了它们，服务就会"看起来成功"——而失败的文件其实是静默消失了。
+    """
+    svc = _rw_service(db_dir, tmp_path)
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        body = c.post("/ingest", json={}).json()
+    assert "skipped_files" in body and "errors" in body
+
+
+def test_concurrent_write_rejected_with_409(db_dir, tmp_path):
+    """同一时刻至多一个作业（保护 Auditor 的单写者前提）。"""
+    svc = _rw_service(db_dir, tmp_path)
+    assert svc.acquire_write()  # 模拟"已有一个作业在跑"
+    try:
+        with TestClient(svc.app, raise_server_exceptions=False) as c:
+            r = c.post("/ingest", json={})
+        assert r.status_code == 409
+        assert r.json()["error"]["code"] == "WRITE_IN_PROGRESS"
+    finally:
+        svc.release_write()
+
+
+def test_write_lock_released_after_job(db_dir, tmp_path):
+    """配对项：跑完一次之后锁**必须**释放，否则服务从此再也写不了。"""
+    svc = _rw_service(db_dir, tmp_path)
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        assert c.post("/ingest", json={}).status_code == 200
+        assert c.post("/ingest", json={}).status_code == 200  # 第二次照样能跑
+
+
+def test_ingest_missing_docs_dir_rejected(db_dir, tmp_path):
+    svc = _rw_service(db_dir, tmp_path)
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        r = c.post("/ingest", json={"docs_dir": str(tmp_path / "nope")})
+    assert r.status_code in (400, 500)
+    assert r.json()["error"]["hint"]  # 仍给指引
+
+
 # ---------- 空结果不是错误 ----------
 
 def test_empty_result_is_200_with_note(tmp_path):

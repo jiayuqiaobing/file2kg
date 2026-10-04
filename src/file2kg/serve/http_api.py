@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -21,18 +22,18 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
+from ..auditor import Auditor
+from ..ingest import ingest as run_ingest_pipeline
 from ..types import Chunk
 
 log = logging.getLogger("file2kg.serve")
 
 # 已知但可能被关闭的路径 → 关闭时的提示。**这不等于该能力存在**：
 # 路由没注册、不可调用，这里只是让 404 别把用户晾着（US3 场景 1）。
+_WRITE_HINT = "以 --allow-write 重启服务可开启（当前为只读模式）"
+
 DISABLED_ROUTE_HINTS: dict[str, tuple[str, str, str]] = {
-    "/ingest": (
-        "WRITE_DISABLED",
-        "写能力未启用",
-        "以 --allow-write 重启服务可开启（当前为只读模式）",
-    ),
+    "/ingest": ("WRITE_DISABLED", "写能力未启用", _WRITE_HINT),
 }
 
 # 需要从对外文本里抹掉的敏感值（密钥等）。由 build_app() 在启动时登记。
@@ -134,9 +135,12 @@ class SearchRequest(BaseModel):
 _FTS_HINT = "先运行一次 file2kg ingest 建立索引；或改用纯向量检索（hybrid=false）"
 
 
-async def _read_body(request):
+async def _read_body(request, *, allow_empty: bool = False):
+    raw = await request.body()
+    if allow_empty and not raw.strip():
+        return {}  # 参数全可选的端点（/ingest）允许空体，不必逼用户发一个 {}
     try:
-        return await request.json()
+        return json.loads(raw)
     except Exception as e:  # noqa: BLE001 — JSONDecodeError/UnicodeDecodeError 等都是用户输入问题
         raise ApiError(
             400, "INVALID_REQUEST", "请求体不是合法 JSON",
@@ -259,6 +263,93 @@ async def search_endpoint(request) -> JSONResponse:
     return JSONResponse(search_documents(service, req))
 
 
+# ---------- 摄取（写，仅写模式注册） ----------
+
+
+class IngestRequest(BaseModel):
+    """摄取请求（contracts/http-api.md §4）。字段全可选。"""
+
+    docs_dir: str | None = None
+    force: bool = False
+
+
+def _parse_ingest_request(payload) -> IngestRequest:
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ApiError(400, "INVALID_REQUEST", "请求体必须是 JSON 对象", '形如 {"docs_dir": "..."}')
+    try:
+        return IngestRequest.model_validate(payload)
+    except ValidationError as e:
+        first = e.errors()[0]
+        raise ApiError(
+            400, "INVALID_REQUEST", f"参数校验失败：{first.get('msg')}",
+            "docs_dir 为字符串（可省略，用服务启动时的默认目录）；force 为布尔",
+        ) from e
+
+
+def run_ingest_job(service, docs_dir: str | None = None, force: bool = False) -> dict:
+    """执行一次摄取作业 —— **HTTP 与 MCP 两个入口共用同一份实现**。
+
+    与 CLI 入口走同一条管道、写同一套审计：**不新开任何写入路径**，
+    全部复用既有的单点组件（宪法原则 III / FR-012）。
+    """
+    if not service.allow_write:
+        # 防御性兜底：正常路径下写模式下才会注册本能力，路由/工具根本不存在
+        raise ApiError(404, "WRITE_DISABLED", "写能力未启用", _WRITE_HINT)
+
+    if not service.acquire_write():
+        raise ApiError(
+            409, "WRITE_IN_PROGRESS", "已有摄取作业在运行",
+            "等当前作业结束后重试（同一时刻至多一个作业）",
+        )
+    try:
+        report, events = run_ingest_pipeline(
+            docs_dir=str(docs_dir or service.config.docs_dir),
+            db_dir=service.config.db_dir,
+            table_name=service.config.table_name,
+            force=force,
+            embedder=service.embedder,  # 复用常驻模型：不许出现第二份模型副本（research.md C1）
+        )
+        # 审计走既有 Auditor——与 CLI 同一套纪律（只追加、单写者、不静默）
+        auditor = Auditor(service.config.audit_dir, report.job_id)
+        audit_path = str(auditor.path)
+        with auditor:
+            for event in events:
+                auditor.log(event)
+            auditor.close(report)
+    except ApiError:
+        raise
+    except Exception as e:  # 目录不存在 / 库不可写 等运行期失败
+        raise ApiError(
+            500, "INGEST_FAILED", f"摄取失败：{type(e).__name__}: {e}",
+            "检查 docs_dir 是否存在、库目录是否可写；细节见服务日志与审计",
+        ) from e
+    finally:
+        service.release_write()
+
+    return {
+        "job_id": report.job_id,
+        "files_total": report.files_total,
+        "ingested": report.ingested,
+        "dupes": report.dupes,
+        "skipped": report.skipped,
+        "failed": report.failed,
+        "chunk_count": len(report.chunks),
+        "audit_path": audit_path,
+        # 这两个字段是宪法原则 IV 在服务层的落点：缺了它们，服务就会"看起来成功"
+        "skipped_files": report.skipped_files,
+        "errors": report.errors,
+    }
+
+
+async def ingest_endpoint(request) -> JSONResponse:
+    """POST /ingest —— 增量摄取（写操作，**仅写模式注册**）。"""
+    service = request.app.state.service
+    req = _parse_ingest_request(await _read_body(request, allow_empty=True))
+    return JSONResponse(run_ingest_job(service, req.docs_dir, req.force))
+
+
 # ---------- 组装 ----------
 
 
@@ -271,7 +362,11 @@ def build_routes(service) -> list[Route]:
     routes: list[Route] = [
         Route("/search", search_endpoint, methods=["POST"]),  # US1：读，恒存在
     ]
-    # US4: GET /info、US3: POST /ingest（仅写模式）——各自的故事里加入
+    if service.allow_write:
+        # 只读模式下这一行**从不执行**：/ingest 根本不在路由表里，
+        # 客户端拿到的是 404 而不是 403（"没有这条路"，不是"有但拒绝"）
+        routes.append(Route("/ingest", ingest_endpoint, methods=["POST"]))
+    # US4: GET /info —— 在 US4 里加入
     return routes
 
 

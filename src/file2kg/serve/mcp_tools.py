@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from .http_api import ApiError, _parse_search_request, search_documents
+from .http_api import ApiError, _parse_search_request, run_ingest_job, search_documents
 
 
 def _as_tool_error(e: ApiError) -> ValueError:
@@ -53,7 +53,18 @@ def build_mcp(service) -> FastMCP:
         except ApiError as e:
             raise _as_tool_error(e) from e
 
-    # US3（T026）：写模式下在此**条件注册** ingest 工具。
-    # 只读模式下它从不被注册——能力不存在，而非存在但拒绝。
+    if service.allow_write:
+
+        @mcp.tool
+        def ingest(docs_dir: str | None = None, force: bool = False) -> dict:
+            """对指定文档目录执行一次**增量**摄取：只处理新增与变化的文件，并清理已删除
+            文件对应的旧内容。每次调用产生一份作业审计。耗时取决于变更量，可能较长。
+            docs_dir 省略时用服务启动时的默认目录；force=true 忽略增量状态、全量重挂。"""
+            try:
+                return run_ingest_job(service, docs_dir, force)
+            except ApiError as e:
+                raise _as_tool_error(e) from e
+
+    # 只读模式下上面这个工具**从不被注册**——能力不存在，而非存在但拒绝。
 
     return mcp

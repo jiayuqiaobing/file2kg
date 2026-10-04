@@ -106,6 +106,35 @@ def test_capabilities_and_tools_are_consistent(svc):
     assert _tool_names(svc) == set(svc.capabilities)
 
 
+def _rw_service(db_dir, tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir(exist_ok=True)
+    (docs / "a.md").write_text("默认端口是 9000，改端口要动配置文件。" * 6, encoding="utf-8")
+    return serve_app.build_service(
+        ServeConfig(db_dir=db_dir, mode="read-write", docs_dir=str(docs),
+                    audit_dir=str(tmp_path / "audit"))
+    )
+
+
+def test_read_write_exposes_ingest_tool(db_dir, tmp_path):
+    """配对项（T020 只验了只读侧）：写模式下 `ingest` 工具**必须**在清单里。
+
+    缺了这条，一个"什么工具都不注册"的实现也能通过只读侧的全部断言。
+    """
+    svc = _rw_service(db_dir, tmp_path)
+    assert _tool_names(svc) == {"service_info", "search", "ingest"}
+    assert _tool_names(svc) == set(svc.capabilities)  # 写模式下清单仍恒等
+
+
+def test_ingest_tool_runs_and_returns_summary(db_dir, tmp_path):
+    """经 MCP 触发摄取：拿到 JobSummary 与可追溯的审计路径。"""
+    svc = _rw_service(db_dir, tmp_path)
+    data = _call(svc, "ingest", {}).data
+    assert data["ingested"] == 1
+    assert data["audit_path"]
+    assert "skipped_files" in data and "errors" in data
+
+
 # ---------- 真实调用 ----------
 
 def test_service_info_tool_returns_descriptor(svc):

@@ -144,11 +144,11 @@ U1–U6 全部停在文档层面。项目 README 自己的纪律是「动每个�
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] 在 `tests/unit/test_serve_http.py` 写写能力测试：只读模式下 `POST /ingest` 返回 **404**（**不是 403**）且错误体 code 为 `WRITE_DISABLED`、`hint` 指向开启方式；写模式下 `/ingest` 路由**必须存在**（配对断言）——**先写测试确认失败**（本任务与 T030 同写一个文件，**不可与 T030 并行**）
-- [ ] T026 [US3] 在 `src/file2kg/serve/mcp_tools.py` 实现**条件注册**的 `ingest` 工具：仅 `mode=="read-write"` 时调用注册（v4 无 `enabled=` 参数，"永不注册"是官方推荐做法，见 research.md D5）
-- [ ] T027 [US3] 在 `src/file2kg/serve/http_api.py` 实现 `POST /ingest`（仅写模式注册）：调用既有 `ingest()` 并传入**常驻 Embedder 实例**（T008 的注入参数，避免第二个模型实例）→ 投影为 `JobSummary`；`skipped_files` 与 `errors` **MUST** 出现在响应中（宪法原则 IV）
-- [ ] T028 [US3] 在 `src/file2kg/serve/app.py` 实现**写操作串行化**：同一时刻至多一个作业，并发写返回 **409 `WRITE_IN_PROGRESS`**（保护 `Auditor` 的单写者前提，research.md D7）
-- [ ] T029 [US3] 验证审计留痕：经服务触发摄取后，确认审计文件真实存在、格式与 CLI 摄取产出的审计**逐字段一致**，且不存在"库已变更但无对应审计"的状态（SC-005）
+- [X] T025 [US3] 在 `tests/unit/test_serve_http.py` 写写能力测试：只读模式下 `POST /ingest` 返回 **404**（**不是 403**）且错误体 code 为 `WRITE_DISABLED`、`hint` 指向开启方式；写模式下 `/ingest` 路由**必须存在**（配对断言）——**先写测试确认失败**（本任务与 T030 同写一个文件，**不可与 T030 并行**）
+- [X] T026 [US3] 在 `src/file2kg/serve/mcp_tools.py` 实现**条件注册**的 `ingest` 工具：仅 `mode=="read-write"` 时调用注册（v4 无 `enabled=` 参数，"永不注册"是官方推荐做法，见 research.md D5）
+- [X] T027 [US3] 在 `src/file2kg/serve/http_api.py` 实现 `POST /ingest`（仅写模式注册）：调用既有 `ingest()` 并传入**常驻 Embedder 实例**（T008 的注入参数，避免第二个模型实例）→ 投影为 `JobSummary`；`skipped_files` 与 `errors` **MUST** 出现在响应中（宪法原则 IV）
+- [X] T028 [US3] 在 `src/file2kg/serve/app.py` 实现**写操作串行化**：同一时刻至多一个作业，并发写返回 **409 `WRITE_IN_PROGRESS`**（保护 `Auditor` 的单写者前提，research.md D7）
+- [X] T029 [US3] 验证审计留痕：经服务触发摄取后，确认审计文件真实存在、格式与 CLI 摄取产出的审计**逐字段一致**，且不存在"库已变更但无对应审计"的状态（SC-005）
 
 **Checkpoint**: 写入路径 opt-in 且全程留痕
 

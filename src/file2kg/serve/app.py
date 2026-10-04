@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,10 +52,23 @@ class Service:
     app: object = None  # Starlette app（类型放宽，避免测试期强依赖 starlette）
     mcp: object | None = None  # US2 挂载后填入
     _dim_checked: bool = field(default=False, repr=False)
+    _write_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def allow_write(self) -> bool:
         return self.config.allow_write
+
+    def acquire_write(self) -> bool:
+        """尝试占用写权（**非阻塞**）：同一时刻至多一个作业。
+
+        `auditor.py` 的设计前提是"单写者 + 只追加"；两个作业并发写同一库/审计会破坏它
+        （宪法原则 IV）。所以第二个请求直接被拒，而不是排队——排队会让调用方
+        以为作业已经开跑。
+        """
+        return self._write_lock.acquire(blocking=False)
+
+    def release_write(self) -> None:
+        self._write_lock.release()
 
     def has(self, capability: str) -> bool:
         """能力是否存在。只读模式下 `has("ingest")` 恒为 False。"""
