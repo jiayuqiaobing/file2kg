@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 
 from ..auditor import Auditor
 from ..ingest import ingest as run_ingest_pipeline
@@ -380,21 +380,24 @@ def build_routes(service) -> list[Route]:
 
 
 def build_app(service) -> Starlette:
-    """父 Starlette app：HTTP 路由 + 挂在 /mcp 的 MCP 子 app。
+    """父 Starlette app：HTTP 路由 + 并入的 MCP 路由。
 
-    MCP 的挂载方式由实测确定（scripts/smoke_fastmcp.py，2026-10-04）：
-    - **U1**：必须 `http_app(path="/")` + `Mount("/mcp", ...)`；用 `path="/mcp"` 会叠成
-      `/mcp/mcp`，客户端打 `/mcp` 只会拿到 404。
-    - **U2**：lifespan **必接**。漏接时 `/mcp` 抛 `RuntimeError`（session manager 的
-      task group 未初始化）——官方文档的警告属实。
+    MCP 的接入方式由**两轮实测**确定（scripts/smoke_fastmcp.py + 真机联调）：
+    - **U1（首轮）**：`http_app(path="/")` + `Mount("/mcp", ...)` 不会叠成 `/mcp/mcp`。
+    - **修正（真机联调）**：Mount 会让**规范 URL `/mcp` 先吃一个 307** 跳到 `/mcp/`。
+      Claude Code 的客户端会跟随，但 urllib 一类不跟随 POST 307 的客户端**直接失败**。
+      故改为**直接并入子 app 的路由**：`/mcp` 直连 200（代价是 `/mcp/` 变成 307，
+      而那是没人用的路径）。见 tests/unit/test_serve_mcp.py 的 redirect 断言。
+    - **U2（两轮都成立）**：lifespan **必接**。漏接时 `/mcp` 抛 `RuntimeError`
+      （session manager 的 task group 未初始化）——并入路由也**不会**自动接上它。
     """
     register_secret(service.config.api_key)
 
     routes = build_routes(service)
     lifespan = None
     if service.mcp is not None:
-        mcp_app = service.mcp.http_app(path="/")
-        routes.append(Mount("/mcp", app=mcp_app))
+        mcp_app = service.mcp.http_app(path="/mcp")
+        routes.extend(mcp_app.routes)  # 并入而非 Mount：见 docstring 的修正说明
         lifespan = mcp_app.lifespan
 
     app = Starlette(

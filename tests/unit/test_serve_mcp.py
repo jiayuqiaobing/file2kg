@@ -193,11 +193,25 @@ def test_initialize_succeeds_over_http(svc):
     """lifespan 已接线：POST /mcp 的 initialize 必须 200。
 
     U2 实测：漏接 lifespan 时这里会抛 RuntimeError（session manager 未初始化）。
-    这条一红，说明有人把 `lifespan=mcp_app.lifespan` 去掉了。
+    这条一红，说明有人把 `lifespan=mcp_app.lifespan` 去掉了——
+    **并入路由并不会自动接上 lifespan**，两件事必须分开做。
     """
     with TestClient(svc.app) as c:
         r = c.post("/mcp", json=INIT_BODY, headers=INIT_HEADERS)
     assert r.status_code == 200
+
+
+def test_mcp_canonical_url_has_no_redirect(svc):
+    """规范 URL `/mcp` MUST 直连 200，不得先 307 跳到 `/mcp/`。
+
+    真机联调抓到的：用 `Mount("/mcp", ...)` 时 `/mcp` → 307。
+    Claude Code 的客户端会跟随重定向所以"看起来能用"，但 urllib 一类
+    **不跟随 POST 307** 的客户端会直接失败——而且失败原因极难排查。
+    改为并入路由后 `/mcp` 直连，这条断言把它钉住。
+    """
+    with TestClient(svc.app) as c:
+        r = c.post("/mcp", json=INIT_BODY, headers=INIT_HEADERS, follow_redirects=False)
+    assert r.status_code == 200, f"规范 URL 被重定向了: {r.status_code} {r.headers.get('location')}"
 
 
 def test_service_info_does_not_load_model(svc):
