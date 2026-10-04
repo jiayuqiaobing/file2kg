@@ -139,12 +139,16 @@ def query(
         embedder.embed(q)
         store = Store(db, table, embedder.model_name, dim=len(q[0].embedding))
         results = store.query(q[0].embedding, text=text if hybrid else None, k=k, hybrid=hybrid)
-    except NotImplementedError as e:  # FTS 缺失（hybrid 需索引）
-        _fail(f"{e}（跑一次 ingest 会自动建 FTS 索引）", code=1)
+    except (NotImplementedError, ValueError) as e:
+        # FTS 缺失（hybrid 需索引）。实测（2026-10-04，lancedb 0.38）：这里抛的是
+        # **ValueError**（"Cannot perform full text search unless an INVERTED index
+        # has been created..."），**不是 NotImplementedError**——原先那条 except 因此
+        # 从未生效，用户只能看到 lancedb 英文原文，拿不到写好的那句指引。
+        if "INVERTED index" in str(e) or "full text search" in str(e):
+            _fail("关键词索引缺失——跑一次 file2kg ingest 会自动建 FTS 索引", code=1)
+        _fail(str(e), code=1)
     except RuntimeError as e:  # 模型/维度/库绑定问题 → 给指引
         _fail(str(e), code=2)
-    except ValueError as e:
-        _fail(str(e), code=1)
     except Exception as e:
         err.print(f"[red]查询失败:[/red] {e}")
         raise SystemExit(2) from e

@@ -99,6 +99,30 @@ def test_query_empty_db_guides_to_ingest(tmp_path, fake_embedder):
     assert "先运行" in result.output
 
 
+def test_query_without_fts_index_gives_actionable_guide(tmp_path, fake_embedder):
+    """库在、表在、但没有 FTS 索引时，MUST 给出"跑一次 ingest"的指引。
+
+    实测（2026-10-04，lancedb 0.38）：缺 FTS 抛的是 **ValueError**
+    （"Cannot perform full text search unless an INVERTED index has been created..."），
+    **不是 NotImplementedError**——cli.py 里专门为这条写的那句指引因此从未生效，
+    用户看到的只是 lancedb 英文原文。错误信息不给修复指引 = 违反宪法「接口契约」。
+    """
+    from file2kg.store import Store
+    from file2kg.types import Chunk
+
+    db = str(tmp_path / "db")
+    store = Store(db, "docs", "Qwen/Qwen3-Embedding-0.6B", 4)
+    chunk = Chunk.from_text(TEXT_A, "a.md")
+    chunk.embedding = [0.1, 0.2, 0.3, 0.4]
+    chunk.emb_model = "Qwen/Qwen3-Embedding-0.6B"
+    store.add_chunks([chunk])  # 刻意**不**调 ensure_fts()
+
+    result = _runner().invoke(app, ["query", "端口", "--db", db])
+    assert result.exit_code == 1
+    assert "ingest" in result.output  # 拿得到修复指引
+    assert "INVERTED index" not in result.output  # 不再把 lancedb 原文甩给用户
+
+
 # ---------- 配置 ----------
 
 def test_cli_config_defaults_align(docs, tmp_path, fake_embedder):
