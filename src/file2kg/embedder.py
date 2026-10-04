@@ -49,6 +49,15 @@ class Embedder:
         self._mode = "api" if api_key else "local"  # 显式判断，不靠猜
         self._backend = None  # None = 未加载（懒加载哨兵）
 
+    @property
+    def is_loaded(self) -> bool:
+        """模型是否已加载常驻（懒加载哨兵是否已被填充）。只读、无副作用。
+
+        查询它 MUST NOT 触发加载。serve 的 warm 口径由它回答——服务层不得自持标志位：
+        自持的标志位可以撒谎，"预热非默认"就没人能证伪了。
+        """
+        return self._backend is not None
+
     # ---------- 对外接口 ----------
 
     def embed(self, chunks: list[Chunk]) -> list[Chunk]:

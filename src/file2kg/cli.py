@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import socket
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
@@ -30,7 +31,13 @@ if sys.platform == "win32":
             pass  # 非实子端/重定向时可能不可 reconfig，忽略即可
 
 from .auditor import Auditor
-from .config import DEFAULT_AUDIT_DIR, DEFAULT_DB_DIR, DEFAULT_TABLE
+from .config import (
+    DEFAULT_AUDIT_DIR,
+    DEFAULT_DB_DIR,
+    DEFAULT_SERVE_HOST,
+    DEFAULT_SERVE_PORT,
+    DEFAULT_TABLE,
+)
 from .embedder import Embedder
 from .ingest import ingest as run_ingest, _ERROR_LIMIT
 from .store import Store
@@ -152,6 +159,75 @@ def query(
     for r in results:
         out.add_row(f"{r.get('_relevance_score', 0.0):.4f}", r["source"], r["text"])
     err.print(out)  # 数据表格走 stderr：进度/警告/结果都在一个屏幕
+
+
+@app.command()
+def serve(
+    db: Annotated[str, typer.Option(help="向量库目录")] = DEFAULT_DB_DIR,
+    table: Annotated[str, typer.Option(help="库内表名（一库一模）")] = DEFAULT_TABLE,
+    model: Annotated[Optional[str], typer.Option(help="嵌入模型（必须与建库时一致）")] = None,
+    host: Annotated[str, typer.Option(help="绑定地址；默认只绑本机回环")] = DEFAULT_SERVE_HOST,
+    port: Annotated[int, typer.Option(help="端口；被占用时明确失败，不静默换端口")] = DEFAULT_SERVE_PORT,
+    allow_write: Annotated[bool, typer.Option(help="开启写权限；默认关（只读，写能力根本不存在）")] = False,
+    preload: Annotated[bool, typer.Option(help="启动时预热模型；默认关（首次检索才加载，之后常驻）")] = False,
+    docs_dir: Annotated[str, typer.Option(help="写模式下 ingest 请求的默认目标目录")] = ".",
+    api_key: Annotated[Optional[str], typer.Option(envvar="FILE2KG_API_KEY",
+                                                   help="API key；只认环境变量（不进命令行历史）")] = None,
+    api_url: Annotated[Optional[str], typer.Option(help="API 端点（默认阿里云 DashScope 兼容端点）")] = None,
+    audit: Annotated[str, typer.Option(help="审计日志目录")] = DEFAULT_AUDIT_DIR,
+) -> None:
+    """启动常驻服务（HTTP API + MCP）：模型只加载一次，之后检索亚秒级返回。"""
+    # 延迟导入：不带 serve 依赖时不该让整个 CLI 崩，而是给一行可操作的安装指引
+    try:
+        from .serve import build_service, run as run_server  # noqa: PLC0415
+    except ImportError as e:  # pragma: no cover - 取决于环境是否装了 extra
+        _fail(
+            f'serve 需要额外依赖，请先安装：pip install "file2kg[serve]"（原因: {e}）',
+            code=2,
+        )
+    from .config import ServeConfig  # noqa: PLC0415
+
+    try:
+        cfg = ServeConfig(
+            db_dir=db, table_name=table, model=model, host=host, port=port,
+            mode="read-write" if allow_write else "read-only",
+            preload=preload, docs_dir=docs_dir, audit_dir=audit,
+            api_key=api_key, api_url=api_url,
+        )
+    except ValueError as e:  # 用户输入错（非法 mode/port）
+        _fail(str(e), code=1)
+
+    try:
+        service = build_service(cfg)  # 库不存在 / 模型不匹配 → RuntimeError
+    except RuntimeError as e:
+        _fail(str(e), code=2)
+
+    # 只绑回环是默认；一旦放宽，必须在启动输出里把这件事说清楚（FR-002）
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        err.print(f"[yellow]警告:[/yellow] 绑定到 {host}——[bold]知识库已暴露到网络[/bold]")
+
+    # 端口占用：明确失败，不静默换端口（诚实优先于"看起来能跑"）
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind((host, port))
+        probe.close()
+    except OSError as e:
+        _fail(f"端口 {port} 无法绑定（{e}）——不静默换端口，请显式指定 --port", code=2)
+
+    d = service.descriptor()
+    info = Table(title="serve", show_header=False)
+    info.add_row("库", f"{d['db_dir']} / {d['table']}")
+    info.add_row("模型", f"{d['model']}（{d['dim']} 维）")
+    info.add_row("权限", "只读" if not allow_write else "可写（--allow-write 已开启）")
+    info.add_row("预热", "已加载常驻" if d["warm"] else "未加载（首次检索时加载，之后常驻）")
+    info.add_row("端点", f"http://{host}:{port}/search、/info、/mcp（Ctrl-C 停止）")
+    err.print(info)
+
+    # 退出码实测（2026-10-04）：**Ctrl-C 停止不是 0**。uvicorn 在优雅关闭后会把捕获的信号
+    # 重新抛出（Unix 惯例，SIGINT 等价 130）；Windows 下 SIGBREAK 实测得到退出码 3。
+    # 这是有意为之——"被信号打断"本就该区别于"正常跑完"。
+    # 规格 FR-019 要求的三件事（释放端口、关闭句柄、可立即重启）均已验过，与退出码无关。
+    run_server(service, host=host, port=port)
 
 
 if __name__ == "__main__":

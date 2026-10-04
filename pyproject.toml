@@ -33,7 +33,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# serve：常驻服务（HTTP API + MCP）。刻意不做核心依赖——fastmcp 实测带入 68 个包，
+# 让只用 ingest/query 的用户背这些与"装完即用"冲突（宪法原则 I / II）。
+# starlette 与 uvicorn 已在 fastmcp 依赖树内，此处属显式声明而非新增下载。
+serve = [
+    "fastmcp>=4.0,<5",
+    "starlette>=1.0.1",
+    "uvicorn>=0.35",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",       # starlette TestClient 依赖；本项目里它只是 huggingface-hub 的传递依赖，
+                         # 显式声明以免上游松手时测试莫名其妙崩（smoke U5 实测发现）
+    "file2kg[serve]",    # 测试需要 serve 依赖
+]
 
 [project.scripts]
 file2kg = "file2kg.cli:app"  # console 入口：typer app 即 callable

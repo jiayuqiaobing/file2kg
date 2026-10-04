@@ -84,6 +84,7 @@ def ingest(
     force: bool = False,
     state_file: str | None = None,
     window: int = _WINDOW,
+    embedder: Embedder | None = None,
 ) -> tuple[JobReport, list[dict]]:
     """执行一次摄取作业。返回 (JobReport, 事件流)。
 
@@ -91,6 +92,9 @@ def ingest(
       {"type": "create"|"update"|"delete"|"skip"|"error"|"warning", "source": rel, ...}
     状态机分支：mtime+size 一致 → 跳过；文本 hash 一致 → 只更新状态；
     否则 → 先删后增；状态里有、目录没了 → delete_source（僵尸防线）。
+
+    embedder：可选注入。传了就**直接使用**（serve 复用常驻模型，避免内存里出现
+    第二份模型副本）；不传则维持原行为，自建一个（CLI 路径）。
     """
     docs_dir = Path(docs_dir)
     if not docs_dir.is_dir():
@@ -101,7 +105,8 @@ def ingest(
     report = JobReport(job_id=make_hash(f"{docs_dir}|{datetime.now().isoformat()}")[:12], started_at=datetime.now())
     events: list[dict] = []
 
-    embedder = Embedder(model=model, api_key=api_key, api_url=api_url)
+    if embedder is None:  # serve 注入常驻实例；缺省行为不变：自建
+        embedder = Embedder(model=model, api_key=api_key, api_url=api_url)
     fp = _fingerprint(embedder.model_name, chunk_size, overlap)
     if state.get("fingerprint") and state["fingerprint"] != fp:
         events.append({

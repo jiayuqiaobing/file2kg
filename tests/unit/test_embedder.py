@@ -41,6 +41,33 @@ def test_embed_empty_never_loads():
     assert e._backend.calls == []  # encode 没被调
 
 
+# ---------- 加载状态（serve 的 warm 口径） ----------
+
+def test_is_loaded_false_by_default():
+    """新建实例：未加载。serve 的 warm=false 必须由此而来——服务不得自持标志位。"""
+    assert Embedder().is_loaded is False
+
+
+def test_is_loaded_true_after_real_load_path(monkeypatch):
+    """走真实装载路径（_ensure_backend）之后：True。
+
+    配对断言：缺了这条，一个恒返回 False 的实现在上一条里会假通过——
+    "预热非默认"就退化成"永远不预热"，而测试全绿。
+    """
+    e = Embedder()
+    monkeypatch.setattr(e, "_load_local", lambda: _FakeBackend())
+    assert e.is_loaded is False
+    e.embed(_chunks(1))
+    assert e.is_loaded is True
+
+
+def test_is_loaded_stays_false_for_empty_embed():
+    """空列表不触发加载：is_loaded 保持 False（与 test_embed_empty_never_loads 同源）。"""
+    e = Embedder()
+    e.embed([])
+    assert e.is_loaded is False
+
+
 # ---------- 参数语义（避坑守护） ----------
 
 def test_default_batch_size_is_cpu_friendly():

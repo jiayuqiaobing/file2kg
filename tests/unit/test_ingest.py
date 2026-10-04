@@ -204,3 +204,46 @@ def test_empty_dir_clears_all(workdir, fake_embedder):
     assert _rows(db) == []
     state = _state(db)
     assert "a.md" not in state and "b.md" not in state  # 状态键被移除
+
+
+# ---------- Embedder 注入（serve 复用常驻模型） ----------
+
+class _InjectedEmbedder:
+    """外部传进来的 Embedder：记录自己被调用了几次。"""
+
+    model_name = "Qwen/Qwen3-Embedding-0.6B"
+
+    def __init__(self) -> None:
+        self.batches = 0
+
+    def embed(self, chunks):
+        self.batches += 1
+        for c in chunks:
+            c.embedding = [0.1, 0.2, 0.3, 0.4]
+            c.emb_model = self.model_name
+        return chunks
+
+
+def test_injected_embedder_is_used_and_no_second_one_built(workdir, fake_embedder):
+    """传入 embedder 时：用它，且**不另建**一个（serve 复用常驻模型的支点）。
+
+    若这里另建，服务里会同时存在两份 639MB 模型——"模型常驻"名不副实。
+    """
+    docs, db = workdir
+    injected = _InjectedEmbedder()
+    report, _ = ingest(docs, db, embedder=injected)
+    assert report.ingested == 2
+    assert injected.batches >= 1  # 注入的实例真被用了
+    assert fake_embedder["batches"] == 0  # 没有另建 Embedder（fixture 计数保持 0）
+
+
+def test_default_path_still_self_builds_embedder(workdir, fake_embedder):
+    """不传 embedder 时：行为不变，仍由 ingest 自建 —— **配对断言**。
+
+    缺了这条，一个"永远忽略注入参数、只用自己的"实现照样能通过上一条，
+    而 CLI 路径（依赖自建）可能在别处悄悄坏掉。
+    """
+    docs, db = workdir
+    report, _ = ingest(docs, db)
+    assert report.ingested == 2
+    assert fake_embedder["batches"] >= 1  # 自建的那个被调用了
