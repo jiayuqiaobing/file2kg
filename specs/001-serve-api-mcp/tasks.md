@@ -164,9 +164,9 @@ U1–U6 全部停在文档层面。项目 README 自己的纪律是「动每个�
 
 ### Implementation for User Story 4
 
-- [ ] T030 [US4] 在 `tests/unit/test_serve_http.py` 写 `/info` 测试：字段完整性、`model`/`dim` **取自库元数据**而非进程配置、**`warm` 状态成对断言**（默认 `False`、显式 `--preload` 后 `True`，plan.md §② 的配对原则）、**调用 `/info` 不改变 `warm`**（FR-007）——**先写测试确认失败**（本任务与 T025 同写一个文件，**不可与 T025 并行**）
-- [ ] T031 [US4] 在 `src/file2kg/serve/http_api.py` 实现 `GET /info`，返回 `ServiceDescriptor`（data-model.md §2.1）。`warm` MUST 由 `Embedder.is_loaded` 回答，**服务不得自持标志位**（research.md C5）
-- [ ] T032 [US4] 在 `src/file2kg/serve/app.py` 实现启动时的**分层一库一模校验**：比对库元数据中的模型名 vs 配置模型名，不符即**拒绝启动**并同时报出两边模型名与维度；此检查 MUST NOT 加载模型（否则破坏 `warm=false`，research.md C3）
+- [X] T030 [US4] 在 `tests/unit/test_serve_http.py` 写 `/info` 测试：字段完整性、`model`/`dim` **取自库元数据**而非进程配置、**`warm` 状态成对断言**（默认 `False`、显式 `--preload` 后 `True`，plan.md §② 的配对原则）、**调用 `/info` 不改变 `warm`**（FR-007）——**先写测试确认失败**（本任务与 T025 同写一个文件，**不可与 T025 并行**）
+- [X] T031 [US4] 在 `src/file2kg/serve/http_api.py` 实现 `GET /info`，返回 `ServiceDescriptor`（data-model.md §2.1）。`warm` MUST 由 `Embedder.is_loaded` 回答，**服务不得自持标志位**（research.md C5）
+- [X] T032 [US4] 在 `src/file2kg/serve/app.py` 实现启动时的**分层一库一模校验**：比对库元数据中的模型名 vs 配置模型名，不符即**拒绝启动**并同时报出两边模型名与维度；此检查 MUST NOT 加载模型（否则破坏 `warm=false`，research.md C3）
 
 **Checkpoint**: 四个故事全部独立可用
 

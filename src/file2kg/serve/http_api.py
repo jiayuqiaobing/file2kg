@@ -263,6 +263,15 @@ async def search_endpoint(request) -> JSONResponse:
     return JSONResponse(search_documents(service, req))
 
 
+async def info_endpoint(request) -> JSONResponse:
+    """GET /info —— 服务自述（读操作，恒存在）。
+
+    **不触发模型加载**：`warm` 由 `Embedder.is_loaded` 回答，服务不自持标志位
+    （research.md C5）——所以查自述永远是廉价的。
+    """
+    return JSONResponse(request.app.state.service.descriptor())
+
+
 # ---------- 摄取（写，仅写模式注册） ----------
 
 
@@ -361,12 +370,12 @@ def build_routes(service) -> list[Route]:
     """
     routes: list[Route] = [
         Route("/search", search_endpoint, methods=["POST"]),  # US1：读，恒存在
+        Route("/info", info_endpoint, methods=["GET"]),  # US4：读，恒存在
     ]
     if service.allow_write:
         # 只读模式下这一行**从不执行**：/ingest 根本不在路由表里，
         # 客户端拿到的是 404 而不是 403（"没有这条路"，不是"有但拒绝"）
         routes.append(Route("/ingest", ingest_endpoint, methods=["POST"]))
-    # US4: GET /info —— 在 US4 里加入
     return routes
 
 

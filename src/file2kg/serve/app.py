@@ -130,9 +130,13 @@ def build_service(config: ServeConfig) -> Service:
     # 破坏"预热非默认"）。维度校验留到首次真正嵌入时（research.md C3）：
     # Store(dim=None) 只检查"元数据 vs schema"自洽，**不验证调用方**。
     if config.model is not None and config.model != store_model:
+        # FR-014 要求"同时说清两边"。库这边的名字与维度都拿得到；**请求那边的维度拿不到**
+        # ——除非真去加载它，而那会让 warm 一开始就是 True，破坏原则 II。所以只报其名字：
+        # 名字不同这件事本身已经足够作为拒绝理由（语义空间不互通）。
         raise RuntimeError(
             f"库 '{config.table_name}' 由 {store_model}({store_dim}维) 建立，"
-            f"当前模型 {config.model}——不兼容！请换回原模型，或用 --force 重建库"
+            f"当前请求的模型是 {config.model}——两者语义空间不互通，不兼容！"
+            f"请换回原模型，或用 --force 重建库"
         )
     model_name = config.model or store_model
 

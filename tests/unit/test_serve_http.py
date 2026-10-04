@@ -361,6 +361,63 @@ def test_ingest_missing_docs_dir_rejected(db_dir, tmp_path):
     assert r.json()["error"]["hint"]  # 仍给指引
 
 
+# ---------- US4：服务自述 ----------
+
+def test_info_returns_full_descriptor(client):
+    r = client.get("/info")
+    assert r.status_code == 200
+    d = r.json()
+    assert set(d) == {"service", "db_dir", "table", "model", "dim", "mode", "warm", "capabilities"}
+    assert d["table"] == "docs"
+    assert d["mode"] == "read-only"
+    assert d["dim"] == DIM
+
+
+def test_info_reports_store_bound_model(db_dir):
+    """自述里的 model 取自**库元数据**（建库时的绑定），不是进程配置。
+
+    客户端由此确知"这个库绑的是什么"——一库一模对客户端的透明面。
+    """
+    svc = serve_app.build_service(ServeConfig(db_dir=db_dir, model=None))
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        assert c.get("/info").json()["model"] == MODEL
+
+
+def test_info_does_not_load_model(client):
+    """查自述 MUST NOT 触发模型加载（FR-007 / 宪法原则 II）。"""
+    assert client.service.embedder.is_loaded is False
+    client.get("/info")
+    assert client.service.embedder.is_loaded is False
+    assert client.get("/info").json()["warm"] is False  # 再查一次仍然没加载
+
+
+def test_info_warm_flips_true_after_search(client):
+    """**配对断言**：跑过检索之后 warm 必须变 True。
+
+    缺了这条，一个 `warm` 恒为 False 的实现能通过上面所有断言——
+    而那正是"预热非默认"退化成"永远不预热"的样子。
+    """
+    assert client.get("/info").json()["warm"] is False
+    assert _search(client, query="端口").status_code == 200
+    assert client.get("/info").json()["warm"] is True
+
+
+def test_info_warm_true_when_preloaded(db_dir, tmp_path):
+    """配对断言之二：显式预热时，装配刚完成 warm 就该是 True。"""
+    svc = serve_app.build_service(ServeConfig(db_dir=db_dir, preload=True))
+    assert svc.descriptor()["warm"] is True
+    with TestClient(svc.app, raise_server_exceptions=False) as c:
+        assert c.get("/info").json()["warm"] is True
+
+
+def test_info_capabilities_match_route_table(client):
+    """自述承诺的能力，路由表里必须真有（提示不许承诺不存在的东西）。"""
+    d = client.get("/info").json()
+    paths = {getattr(r, "path", "") for r in client.service.app.routes}
+    assert "search" in d["capabilities"] and "/search" in paths
+    assert ("ingest" in d["capabilities"]) == ("/ingest" in paths)
+
+
 # ---------- 空结果不是错误 ----------
 
 def test_empty_result_is_200_with_note(tmp_path):

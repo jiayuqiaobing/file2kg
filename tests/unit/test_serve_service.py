@@ -128,9 +128,16 @@ def test_descriptor_reports_store_bound_model_not_config(db_dir):
 
 
 def test_mismatched_model_refused(db_dir):
-    """换模型去服务已有库 → 拒绝，且两边模型名都报出来（宪法原则 V）。"""
-    with pytest.raises(RuntimeError, match="不兼容"):
+    """换模型去服务已有库 → 拒绝，且**两边模型名都报出来**（宪法原则 V / FR-014）。
+
+    只报一边，用户不知道该换回什么。
+    """
+    with pytest.raises(RuntimeError, match="不兼容") as ei:
         _build(db_dir, model=OTHER_MODEL)
+    msg = str(ei.value)
+    assert MODEL in msg, "没报出库绑定的模型"
+    assert OTHER_MODEL in msg, "没报出请求的模型"
+    assert str(DIM) in msg, "没报出库的向量维度"
 
 
 def test_mismatch_refusal_does_not_load_model(db_dir):
